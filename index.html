@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>APO STUDIO V12 | ASSET EDITOR</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        :root { --neon: #0f8; --bg: #0a0a0a; --panel: #151515; --accent: #f0f; }
+        * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, sans-serif; }
+        body { background: var(--bg); color: #ccc; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+
+        /* Header & Toolbar */
+        header { background: #000; padding: 10px 20px; border-bottom: 2px solid var(--neon); display: flex; justify-content: space-between; align-items: center; }
+        .btn { background: #222; color: var(--neon); border: 1px solid var(--neon); padding: 8px 15px; cursor: pointer; font-size: 12px; font-weight: bold; text-transform: uppercase; border-radius: 3px; }
+        .btn:hover { background: var(--neon); color: #000; }
+        .btn-save { border-color: var(--accent); color: var(--accent); }
+        .btn-save:hover { background: var(--accent); color: #fff; }
+
+        /* Main Layout */
+        .main { display: grid; grid-template-columns: 300px 1fr; flex: 1; overflow: hidden; }
+
+        /* File Explorer */
+        #explorer { background: var(--panel); border-right: 1px solid #333; overflow-y: auto; padding: 10px; }
+        .file-item { padding: 5px 10px; cursor: pointer; border-radius: 3px; font-size: 13px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .file-item:hover { background: #222; }
+        .file-item.active { background: #333; color: var(--neon); border-left: 3px solid var(--neon); }
+
+        /* Editor Area */
+        #editor-container { display: flex; flex-direction: column; background: #050505; position: relative; }
+        textarea { flex: 1; background: transparent; color: #aaa; border: none; padding: 20px; font-family: 'Consolas', monospace; font-size: 14px; resize: none; outline: none; }
+        
+        /* Preview Area */
+        #preview { display: none; flex: 1; align-items: center; justify-content: center; padding: 20px; }
+        #preview img { max-width: 100%; max-height: 80%; border: 2px solid #333; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        #preview audio { width: 80%; }
+
+        .status { font-size: 10px; padding: 5px 10px; background: #000; color: #666; }
+    </style>
+</head>
+<body>
+
+<header>
+    <div style="font-weight: bold; color: var(--neon);">APO STUDIO V12 <span style="font-size: 10px; color: #666;">| EDITOR DE ASSETS</span></div>
+    <div style="display: flex; gap: 10px;">
+        <input type="file" id="importFile" accept=".zip,.apk" style="display:none">
+        <button class="btn" onclick="document.getElementById('importFile').click()">Abrir APK/ZIP</button>
+        <button class="btn btn-save" onclick="exportNewFile()">Build Nova Versão</button>
+    </div>
+</header>
+
+<div class="main">
+    <div id="explorer">
+        <div style="color: #555; font-size: 11px; margin-bottom: 10px;">ARQUIVOS DO PROJETO</div>
+        <div id="fileList"></div>
+    </div>
+    
+    <div id="editor-container">
+        <textarea id="textEditor" placeholder="Selecione um arquivo de texto para editar..."></textarea>
+        <div id="preview"></div>
+        <div class="status" id="statusInfo">Nenhum arquivo carregado</div>
+    </div>
+</div>
+
+<script>
+    let zipInstance = null;
+    let currentFileName = null;
+    const fileDataCache = {}; // Armazena edições temporárias
+
+    document.getElementById('importFile').addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        document.getElementById('statusInfo').innerText = "Lendo arquivo: " + file.name;
+        const reader = new FileReader();
+        
+        reader.onload = async (event) => {
+            zipInstance = await JSZip.loadAsync(event.target.result);
+            renderFileList();
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
+    function renderFileList() {
+        const list = document.getElementById('fileList');
+        list.innerHTML = "";
+        
+        Object.keys(zipInstance.files).forEach(path => {
+            if (zipInstance.files[path].dir) return;
+
+            const div = document.createElement('div');
+            div.className = 'file-item';
+            div.innerText = path;
+            div.onclick = () => loadFile(path, div);
+            list.appendChild(div);
+        });
+        document.getElementById('statusInfo').innerText = "Arquivos carregados com sucesso.";
+    }
+
+    async function loadFile(path, element) {
+        // UI Update
+        document.querySelectorAll('.file-item').forEach(el => el.classList.remove('active'));
+        element.classList.add('active');
+        currentFileName = path;
+
+        const file = zipInstance.file(path);
+        const ext = path.split('.').pop().toLowerCase();
+        
+        // Reset Views
+        document.getElementById('textEditor').style.display = "none";
+        document.getElementById('preview').style.display = "none";
+        document.getElementById('preview').innerHTML = "";
+
+        // Lógica de Visualização por Extensão
+        if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext)) {
+            const blob = await file.async("blob");
+            const url = URL.createObjectURL(blob);
+            const img = document.createElement('img');
+            img.src = url;
+            document.getElementById('preview').appendChild(img);
+            document.getElementById('preview').style.display = "flex";
+            document.getElementById('statusInfo').innerText = `Visualizando imagem: ${path}`;
+        } 
+        else if (['mp3', 'wav', 'ogg'].includes(ext)) {
+            const blob = await file.async("blob");
+            const url = URL.createObjectURL(blob);
+            const audio = document.createElement('audio');
+            audio.controls = true;
+            audio.src = url;
+            document.getElementById('preview').appendChild(audio);
+            document.getElementById('preview').style.display = "flex";
+            document.getElementById('statusInfo').innerText = `Ouvindo áudio: ${path}`;
+        }
+        else {
+            // Assume que é texto (JS, HTML, JSON, XML)
+            const text = await file.async("string");
+            document.getElementById('textEditor').value = text;
+            document.getElementById('textEditor').style.display = "block";
+            document.getElementById('statusInfo').innerText = `Editando: ${path}`;
+        }
+    }
+
+    // Salva o texto editado de volta no ZIP da memória
+    document.getElementById('textEditor').addEventListener('input', (e) => {
+        if (currentFileName && zipInstance) {
+            zipInstance.file(currentFileName, e.target.value);
+        }
+    });
+
+    async function exportNewFile() {
+        if (!zipInstance) return alert("Abra um arquivo primeiro!");
+
+        document.getElementById('statusInfo').innerText = "Compilando nova versão...";
+        
+        const content = await zipInstance.generateAsync({type: "blob"});
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(content);
+        link.download = "apo_edited_version.zip"; // Navegadores bloqueiam .apk direto as vezes, então baixamos como zip
+        link.click();
+        
+        document.getElementById('statusInfo').innerText = "Download iniciado!";
+    }
+</script>
+
+</body>
+</html>
