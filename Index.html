@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>APO STUDIO V12 | FILESYSTEM EDITION</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        :root { --neon: #0f8; --bg: #0d0d0d; --folder: #ffd700; --file: #888; }
+        * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, sans-serif; }
+        
+        body { background: var(--bg); color: #eee; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+        /* Header */
+        header { background: #000; padding: 10px 20px; border-bottom: 2px solid var(--neon); display: flex; justify-content: space-between; align-items: center; }
+        .btn-group { display: flex; gap: 8px; }
+        .btn { background: #1a1a1a; color: var(--neon); border: 1px solid var(--neon); padding: 6px 12px; cursor: pointer; font-size: 11px; font-weight: bold; border-radius: 4px; }
+        .btn:hover { background: var(--neon); color: #000; }
+
+        /* Layout */
+        .container { display: grid; grid-template-columns: 350px 1fr; flex: 1; overflow: hidden; }
+
+        /* Sidebar / Tree View */
+        #sidebar { background: #111; border-right: 1px solid #222; overflow-y: auto; padding: 10px; font-size: 13px; }
+        .folder { cursor: pointer; user-select: none; margin-bottom: 2px; }
+        .folder::before { content: '📁 '; color: var(--folder); }
+        .folder.open::before { content: '📂 '; }
+        .file { cursor: pointer; padding-left: 20px; color: var(--file); margin: 2px 0; border-radius: 3px; }
+        .file:hover { background: #222; color: #fff; }
+        .file.active { background: #0f82; color: var(--neon); border-right: 3px solid var(--neon); }
+        .nested { display: none; padding-left: 15px; }
+        .active-folder { display: block; }
+
+        /* Workspace */
+        #workspace { display: flex; flex-direction: column; background: #050505; position: relative; }
+        #textEditor { flex: 1; background: transparent; color: #adbac7; border: none; padding: 20px; font-family: 'Consolas', monospace; font-size: 14px; outline: none; display: none; }
+        
+        /* Asset Viewer */
+        #viewer { display: none; flex: 1; flex-direction: column; align-items: center; justify-content: center; padding: 20px; }
+        #viewer img { max-width: 80%; max-height: 60%; border: 1px solid #333; margin-bottom: 15px; }
+        .replace-box { background: #1a1a1a; padding: 15px; border-radius: 8px; border: 1px dashed #444; text-align: center; }
+
+        #status { font-size: 10px; background: #000; color: #555; padding: 5px 15px; border-top: 1px solid #222; }
+    </style>
+</head>
+<body>
+
+<header>
+    <div style="font-weight: bold; color: var(--neon);">APO STUDIO <span style="color:#555">v12.5</span></div>
+    <div class="btn-group">
+        <input type="file" id="inputZip" hidden accept=".zip,.apk">
+        <button class="btn" onclick="document.getElementById('inputZip').click()">ABRIR ARQUIVO</button>
+        <button class="btn" style="border-color:#f0f; color:#f0f" onclick="buildNewFile()">EXPORTAR PROJETO</button>
+    </div>
+</header>
+
+<div class="container">
+    <div id="sidebar">
+        <div style="color:#444; font-size:10px; margin-bottom:10px; font-weight:bold;">ESTRUTURA DE PASTAS</div>
+        <div id="tree"></div>
+    </div>
+
+    <div id="workspace">
+        <textarea id="textEditor" spellcheck="false"></textarea>
+        
+        <div id="viewer">
+            <div id="mediaRender"></div>
+            <div class="replace-box">
+                <p style="font-size:11px; color:#888">Deseja trocar este arquivo?</p>
+                <input type="file" id="replaceFile" hidden>
+                <button class="btn" onclick="document.getElementById('replaceFile').click()">SUBSTITUIR ASSET</button>
+            </div>
+        </div>
+
+        <div id="status">Aguardando importação...</div>
+    </div>
+</div>
+
+<script>
+    let zipProject = null;
+    let currentPath = "";
+
+    document.getElementById('inputZip').addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if(!file) return;
+
+        updateStatus("Lendo estrutura...");
+        const buffer = await file.arrayBuffer();
+        zipProject = await JSZip.loadAsync(buffer);
+        buildTree();
+        updateStatus("Projeto: " + file.name);
+    });
+
+    function buildTree() {
+        const treeElement = document.getElementById('tree');
+        treeElement.innerHTML = "";
+        const structure = {};
+
+        // Cria objeto de hierarquia
+        Object.keys(zipProject.files).forEach(path => {
+            const parts = path.split('/');
+            let current = structure;
+            parts.forEach((part, index) => {
+                if(!part) return;
+                if(!current[part]) {
+                    current[part] = (index === parts.length - 1 && !zipProject.files[path].dir) ? null : {};
+                }
+                current = current[part];
+            });
+        });
+
+        // Função recursiva para gerar HTML
+        function generateHTML(obj, parentPath = "") {
+            let html = "";
+            for (const key in obj) {
+                const fullPath = parentPath + key + (obj[key] === null ? "" : "/");
+                if (obj[key] === null) {
+                    html += `<div class="file" onclick="openFile('${fullPath}', this)">📄 ${key}</div>`;
+                } else {
+                    html += `<div class="folder" onclick="toggleFolder(this)">${key}</div>
+                             <div class="nested">${generateHTML(obj[key], fullPath)}</div>`;
+                }
+            }
+            return html;
+        }
+
+        treeElement.innerHTML = generateHTML(structure);
+    }
+
+    function toggleFolder(el) {
+        el.classList.toggle('open');
+        const next = el.nextElementSibling;
+        next.classList.toggle('active-folder');
+    }
+
+    async function openFile(path, el) {
+        currentPath = path;
+        document.querySelectorAll('.file').forEach(f => f.classList.remove('active'));
+        el.classList.add('active');
+
+        const file = zipProject.file(path);
+        const ext = path.split('.').pop().toLowerCase();
+        
+        // Reset Workspace
+        document.getElementById('textEditor').style.display = "none";
+        document.getElementById('viewer').style.display = "none";
+
+        if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext)) {
+            const blob = await file.async("blob");
+            const url = URL.createObjectURL(blob);
+            document.getElementById('mediaRender').innerHTML = `<img src="${url}">`;
+            document.getElementById('viewer').style.display = "flex";
+        } 
+        else if (['mp3', 'wav', 'ogg'].includes(ext)) {
+            const blob = await file.async("blob");
+            const url = URL.createObjectURL(blob);
+            document.getElementById('mediaRender').innerHTML = `<audio controls src="${url}"></audio>`;
+            document.getElementById('viewer').style.display = "flex";
+        }
+        else {
+            const content = await file.async("string");
+            document.getElementById('textEditor').value = content;
+            document.getElementById('textEditor').style.display = "block";
+        }
+        updateStatus("Editando: " + path);
+    }
+
+    // Auto-save no texto
+    document.getElementById('textEditor').addEventListener('input', (e) => {
+        if(zipProject && currentPath) zipProject.file(currentPath, e.target.value);
+    });
+
+    // Substituir binários (Imagem/Som)
+    document.getElementById('replaceFile').addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if(!file) return;
+        const buffer = await file.arrayBuffer();
+        zipProject.file(currentPath, buffer);
+        alert("Substituído com sucesso!");
+        openFile(currentPath, document.querySelector('.file.active')); // Refresh
+    });
+
+    async function buildNewFile() {
+        if(!zipProject) return;
+        updateStatus("Compilando novo arquivo...");
+        const content = await zipProject.generateAsync({type: "blob", compression: "DEFLATE"});
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(content);
+        link.download = "novo_projeto_apo.apk";
+        link.click();
+        updateStatus("Pronto!");
+    }
+
+    function updateStatus(txt) { document.getElementById('status').innerText = txt; }
+</script>
+
+</body>
+</html>
